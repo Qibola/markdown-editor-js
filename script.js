@@ -1,4 +1,4 @@
-// Markdown editor — step 2: live preview with a basic Markdown-to-HTML renderer.
+// Markdown editor — step 3: syntax highlighting for fenced code blocks.
 
 // Escape the characters that matter in HTML so user text can never inject markup.
 function escapeHtml(text) {
@@ -50,6 +50,66 @@ function renderInline(text) {
   return html.replace(/\u0000(\d+)\u0000/g, (_, i) => codeSpans[Number(i)]);
 }
 
+// Syntax highlighting for fenced code blocks. Each language is a list of
+// [tokenClass, regex] rules tried in order at the current position; the first
+// match wins, so comments and strings are claimed before keywords inside them.
+const JS_KEYWORDS = "break case catch class const continue default delete do else export extends finally for function if import in instanceof let new of return static super switch this throw try typeof var void while yield async await true false null undefined";
+const PY_KEYWORDS = "and as assert async await break class continue def del elif else except finally for from global if import in is lambda nonlocal not or pass raise return try while with yield True False None self";
+const wordsRe = (list) => new RegExp(`\\b(?:${list.split(" ").join("|")})\\b`, "y");
+
+const HIGHLIGHT_RULES = {
+  js: [
+    ["comment", /\/\/[^\n]*|\/\*[\s\S]*?(?:\*\/|$)/y],
+    ["string", /(["'`])(?:\\[\s\S]|(?!\1)[^\\])*(?:\1|$)/y],
+    ["keyword", wordsRe(JS_KEYWORDS)],
+    ["number", /\b(?:0[xX][\da-fA-F]+|\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)\b/y],
+  ],
+  python: [
+    ["comment", /#[^\n]*/y],
+    ["string", /("""|''')[\s\S]*?(?:\1|$)|(["'])(?:\\.|(?!\2)[^\\\n])*(?:\2|$)/y],
+    ["keyword", wordsRe(PY_KEYWORDS)],
+    ["number", /\b\d+(?:\.\d+)?(?:[eE][+-]?\d+)?\b/y],
+  ],
+  css: [
+    ["comment", /\/\*[\s\S]*?(?:\*\/|$)/y],
+    ["string", /(["'])(?:\\.|(?!\1)[^\\\n])*(?:\1|$)/y],
+    ["keyword", /[\w-]+(?=\s*:)/y],
+    ["number", /#[\da-fA-F]{3,8}\b|-?\b\d+(?:\.\d+)?(?:px|em|rem|%|vh|vw|s|ms)?/y],
+  ],
+};
+const LANGUAGE_ALIASES = { javascript: "js", ts: "js", typescript: "js", json: "js", py: "python" };
+
+// Return escaped HTML for `code`, with recognised tokens wrapped in
+// <span class="tok-…">. Unknown languages are escaped but left plain.
+function highlightCode(code, lang) {
+  const key = String(lang || "").toLowerCase();
+  const rules = HIGHLIGHT_RULES[LANGUAGE_ALIASES[key] || key];
+  if (!rules) return escapeHtml(code);
+
+  let html = "";
+  let plain = "";
+  let pos = 0;
+  while (pos < code.length) {
+    let matched = null;
+    // Only start a token at a word boundary so `item2` doesn't yield a number.
+    if (pos === 0 || !/\w/.test(code[pos - 1]) || !/\w/.test(code[pos])) {
+      for (const [cls, re] of rules) {
+        re.lastIndex = pos;
+        const m = re.exec(code);
+        if (m && m[0].length) { matched = [cls, m[0]]; break; }
+      }
+    }
+    if (matched) {
+      html += escapeHtml(plain) + `<span class="tok-${matched[0]}">${escapeHtml(matched[1])}</span>`;
+      plain = "";
+      pos += matched[1].length;
+    } else {
+      plain += code[pos++];
+    }
+  }
+  return html + escapeHtml(plain);
+}
+
 // Block-level Markdown: headings, fenced code, lists, horizontal rules, paragraphs.
 function renderMarkdown(source) {
   const lines = String(source).replace(/\r\n?/g, "\n").split("\n");
@@ -77,7 +137,7 @@ function renderMarkdown(source) {
       i++;
       while (i < lines.length && !/^```\s*$/.test(lines[i])) code.push(lines[i++]);
       const cls = m[1] ? ` class="language-${m[1]}"` : "";
-      out.push(`<pre><code${cls}>${escapeHtml(code.join("\n"))}</code></pre>`);
+      out.push(`<pre><code${cls}>${highlightCode(code.join("\n"), m[1])}</code></pre>`);
     } else if ((m = line.match(/^(#{1,6})\s+(.*?)\s*#*\s*$/))) {
       flushAll();
       const level = m[1].length;
@@ -121,5 +181,5 @@ if (typeof document !== "undefined") {
 }
 
 if (typeof module !== "undefined") {
-  module.exports = { escapeHtml, countStats, formatStats, safeUrl, renderInline, renderMarkdown };
+  module.exports = { escapeHtml, countStats, formatStats, safeUrl, renderInline, highlightCode, renderMarkdown };
 }

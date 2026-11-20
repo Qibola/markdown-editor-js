@@ -34,8 +34,8 @@ test("unordered and ordered lists", () => {
 
 test("fenced code blocks keep contents verbatim and escaped", () => {
   assert.equal(
-    renderMarkdown("```js\nconst x = 1 < 2; // **not bold**\n```"),
-    '<pre><code class="language-js">const x = 1 &lt; 2; // **not bold**</code></pre>'
+    renderMarkdown("```text\nconst x = 1 < 2; // **not bold**\n```"),
+    '<pre><code class="language-text">const x = 1 &lt; 2; // **not bold**</code></pre>'
   );
   assert.equal(renderMarkdown("```\nunclosed"), "<pre><code>unclosed</code></pre>");
 });
