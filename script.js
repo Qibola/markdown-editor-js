@@ -1,4 +1,4 @@
-// Markdown editor — step 3: syntax highlighting for fenced code blocks.
+// Markdown editor — step 4: export to HTML and a dark/light theme toggle.
 
 // Escape the characters that matter in HTML so user text can never inject markup.
 function escapeHtml(text) {
@@ -165,6 +165,68 @@ function renderMarkdown(source) {
   return out.join("\n");
 }
 
+// The document's title: the text of its first heading outside a code fence.
+function documentTitle(source) {
+  let inFence = false;
+  for (const line of String(source).replace(/\r\n?/g, "\n").split("\n")) {
+    if (/^```/.test(line)) inFence = !inFence;
+    const m = !inFence && line.match(/^#{1,6}\s+(.*?)\s*#*\s*$/);
+    if (m && m[1]) {
+      // Render then strip tags so **bold** etc. drop out, then undo the escaping
+      // (&amp; last, so "&amp;lt;" stays literal). buildHtmlDocument re-escapes it.
+      return renderInline(m[1])
+        .replace(/<[^>]+>/g, "")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/&amp;/g, "&");
+    }
+  }
+  return "Untitled";
+}
+
+// Turn a title into a safe download name, e.g. "My Notes!" -> "my-notes.html".
+function exportFilename(title) {
+  const slug = String(title).toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "-").replace(/^-+|-+$/g, "");
+  return `${slug || "document"}.html`;
+}
+
+// Styles embedded in exports so the file looks right with no other assets.
+const EXPORT_CSS = `body { max-width: 720px; margin: 2rem auto; padding: 0 1rem; font-family: system-ui, -apple-system, sans-serif; line-height: 1.55; color: #1d2129; }
+code { font: 0.9em ui-monospace, Menlo, monospace; background: #eef0f3; padding: 1px 4px; border-radius: 4px; }
+pre { background: #eef0f3; padding: 10px 12px; border-radius: 6px; overflow-x: auto; }
+pre code { background: none; padding: 0; }
+hr { border: none; border-top: 1px solid #dde1e6; }
+.tok-comment { color: #6a737d; font-style: italic; }
+.tok-string { color: #22863a; }
+.tok-keyword { color: #a626a4; font-weight: 600; }
+.tok-number { color: #b45309; }`;
+
+// Wrap Markdown in a complete, self-contained HTML document.
+function buildHtmlDocument(source) {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>${escapeHtml(documentTitle(source))}</title>
+<style>
+${EXPORT_CSS}
+</style>
+</head>
+<body>
+${renderMarkdown(source)}
+</body>
+</html>
+`;
+}
+
+// Theme helpers: start from the OS preference, then flip on each toggle.
+const initialTheme = (prefersDark) => (prefersDark ? "dark" : "light");
+const nextTheme = (theme) => (theme === "dark" ? "light" : "dark");
+const themeButtonLabel = (theme) => (theme === "dark" ? "Light mode" : "Dark mode");
+
 // Browser-only wiring: re-render the preview and stats on every keystroke.
 if (typeof document !== "undefined") {
   const editor = document.getElementById("editor");
@@ -176,10 +238,33 @@ if (typeof document !== "undefined") {
     stats.textContent = formatStats(countStats(editor.value));
   }
 
+  function exportHtml() {
+    const blob = new Blob([buildHtmlDocument(editor.value)], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = exportFilename(documentTitle(editor.value));
+    link.click();
+    // Revoke later: some browsers read the blob after click() returns.
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  const themeButton = document.getElementById("theme-toggle");
+  function applyTheme(theme) {
+    document.documentElement.dataset.theme = theme;
+    themeButton.textContent = themeButtonLabel(theme);
+  }
+
   editor.addEventListener("input", update);
+  document.getElementById("export-html").addEventListener("click", exportHtml);
+  themeButton.addEventListener("click", () => applyTheme(nextTheme(document.documentElement.dataset.theme)));
+  applyTheme(initialTheme(window.matchMedia("(prefers-color-scheme: dark)").matches));
   update();
 }
 
 if (typeof module !== "undefined") {
-  module.exports = { escapeHtml, countStats, formatStats, safeUrl, renderInline, highlightCode, renderMarkdown };
+  module.exports = {
+    escapeHtml, countStats, formatStats, safeUrl, renderInline, highlightCode, renderMarkdown,
+    documentTitle, exportFilename, buildHtmlDocument, initialTheme, nextTheme, themeButtonLabel,
+  };
 }
