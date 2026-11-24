@@ -1,4 +1,4 @@
-// Markdown editor — step 4: export to HTML and a dark/light theme toggle.
+// Markdown editor — live preview, highlighting, HTML export, themes and autosave.
 
 // Escape the characters that matter in HTML so user text can never inject markup.
 function escapeHtml(text) {
@@ -226,12 +226,57 @@ ${renderMarkdown(source)}
 const initialTheme = (prefersDark) => (prefersDark ? "dark" : "light");
 const nextTheme = (theme) => (theme === "dark" ? "light" : "dark");
 const themeButtonLabel = (theme) => (theme === "dark" ? "Light mode" : "Dark mode");
+// A saved theme wins over the OS preference, but only if it's a theme we know.
+const startingTheme = (saved, prefersDark) =>
+  (saved === "dark" || saved === "light" ? saved : initialTheme(prefersDark));
+
+// Autosave. Storage can be missing or throw (private mode, quota, blocked
+// cookies), so every access is guarded and the editor keeps working without it.
+const STORAGE_KEYS = { doc: "markdown-editor:doc", theme: "markdown-editor:theme" };
+
+function loadSaved(storage, key) {
+  try {
+    return storage ? storage.getItem(key) : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveTo(storage, key, value) {
+  try {
+    if (!storage) return false;
+    storage.setItem(key, value);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// Call fn only after `ms` of quiet, so typing saves once per pause, not per key.
+function debounce(fn, ms) {
+  let timer = null;
+  return (...args) => {
+    clearTimeout(timer);
+    timer = setTimeout(() => fn(...args), ms);
+  };
+}
 
 // Browser-only wiring: re-render the preview and stats on every keystroke.
 if (typeof document !== "undefined") {
   const editor = document.getElementById("editor");
   const preview = document.getElementById("preview");
   const stats = document.getElementById("stats");
+  const saveStatus = document.getElementById("save-status");
+  // Reading window.localStorage itself can throw when storage is blocked.
+  let storage = null;
+  try { storage = window.localStorage; } catch {}
+
+  const savedDoc = loadSaved(storage, STORAGE_KEYS.doc);
+  if (savedDoc !== null) editor.value = savedDoc;
+
+  const saveDoc = debounce(() => {
+    saveStatus.textContent = saveTo(storage, STORAGE_KEYS.doc, editor.value) ? "Saved" : "Not saved";
+  }, 500);
 
   function update() {
     preview.innerHTML = renderMarkdown(editor.value);
@@ -255,10 +300,24 @@ if (typeof document !== "undefined") {
     themeButton.textContent = themeButtonLabel(theme);
   }
 
-  editor.addEventListener("input", update);
+  editor.addEventListener("input", () => {
+    update();
+    saveStatus.textContent = "Saving…";
+    saveDoc();
+  });
+  // Save immediately on leaving, so keystrokes inside the debounce window aren't lost.
+  window.addEventListener("pagehide", () => saveTo(storage, STORAGE_KEYS.doc, editor.value));
   document.getElementById("export-html").addEventListener("click", exportHtml);
-  themeButton.addEventListener("click", () => applyTheme(nextTheme(document.documentElement.dataset.theme)));
-  applyTheme(initialTheme(window.matchMedia("(prefers-color-scheme: dark)").matches));
+  themeButton.addEventListener("click", () => {
+    const theme = nextTheme(document.documentElement.dataset.theme);
+    applyTheme(theme);
+    saveTo(storage, STORAGE_KEYS.theme, theme);
+  });
+  applyTheme(startingTheme(
+    loadSaved(storage, STORAGE_KEYS.theme),
+    window.matchMedia("(prefers-color-scheme: dark)").matches,
+  ));
+  saveStatus.textContent = savedDoc !== null ? "Restored" : "";
   update();
 }
 
@@ -266,5 +325,6 @@ if (typeof module !== "undefined") {
   module.exports = {
     escapeHtml, countStats, formatStats, safeUrl, renderInline, highlightCode, renderMarkdown,
     documentTitle, exportFilename, buildHtmlDocument, initialTheme, nextTheme, themeButtonLabel,
+    startingTheme, STORAGE_KEYS, loadSaved, saveTo, debounce,
   };
 }
